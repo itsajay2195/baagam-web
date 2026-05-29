@@ -9,16 +9,17 @@
 //      }
 //    }
 
-import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: 'REPLACE_ME',
-  authDomain: 'REPLACE_ME',
-  projectId: 'REPLACE_ME',
-  storageBucket: 'REPLACE_ME',
-  messagingSenderId: 'REPLACE_ME',
-  appId: 'REPLACE_ME',
+  apiKey: "AIzaSyAEi_VNY-7Dvmwr_M-l6a9ikCsyzLJiWuc",
+  authDomain: "baagam-web.firebaseapp.com",
+  projectId: "baagam-web",
+  storageBucket: "baagam-web.firebasestorage.app",
+  messagingSenderId: "288483077004",
+  appId: "1:288483077004:web:b5a869ecc4d425ccc104a9",
+  measurementId: "G-V8DENJJW7B",
 };
 
 const app = initializeApp(firebaseConfig);
