@@ -33,6 +33,7 @@ export default function GroupPage() {
 
   const [showAddMember, setShowAddMember] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showSettleUp, setShowSettleUp] = useState(false);
 
   useEffect(() => {
@@ -202,7 +203,15 @@ export default function GroupPage() {
                       {exp.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                     </p>
                   </div>
-                  <span className="text-text font-bold text-base shrink-0">₹{exp.amount.toFixed(2)}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => setEditingExpense(exp)}
+                      className="text-text3 hover:text-text2 transition-colors text-xs px-2 py-1 rounded-lg border border-border bg-surface"
+                    >
+                      Edit
+                    </button>
+                    <span className="text-text font-bold text-base">₹{exp.amount.toFixed(2)}</span>
+                  </div>
                 </div>
               );
             })}
@@ -309,6 +318,14 @@ export default function GroupPage() {
           groupId={groupId}
           members={members}
           onClose={() => setShowAddExpense(false)}
+        />
+      )}
+      {editingExpense && groupId && (
+        <AddExpenseModal
+          groupId={groupId}
+          members={members}
+          expense={editingExpense}
+          onClose={() => setEditingExpense(null)}
         />
       )}
       {showSettleUp && groupId && (

@@ -1,22 +1,26 @@
 import { useState } from 'react';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
-import type { Member } from '../types';
+import type { Member, Expense } from '../types';
 
 const CATEGORIES = ['Food', 'Travel', 'Stay', 'Shopping', 'Entertainment', 'Utilities', 'Other'];
 
 interface Props {
   groupId: string;
   members: Member[];
+  expense?: Expense;
   onClose: () => void;
 }
 
-export default function AddExpenseModal({ groupId, members, onClose }: Props) {
-  const [desc, setDesc] = useState('');
-  const [amount, setAmount] = useState('');
-  const [paidBy, setPaidBy] = useState(members[0]?.id ?? '');
-  const [category, setCategory] = useState('');
-  const [splitAmong, setSplitAmong] = useState<string[]>(members.map(m => m.id));
+export default function AddExpenseModal({ groupId, members, expense, onClose }: Props) {
+  const isEdit = !!expense;
+  const [desc, setDesc] = useState(expense?.description ?? '');
+  const [amount, setAmount] = useState(expense?.amount.toString() ?? '');
+  const [paidBy, setPaidBy] = useState(expense?.paidByMemberId ?? members[0]?.id ?? '');
+  const [category, setCategory] = useState(expense?.category ?? '');
+  const [splitAmong, setSplitAmong] = useState<string[]>(
+    expense?.splitAmong ?? members.map(m => m.id),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -36,14 +40,21 @@ export default function AddExpenseModal({ groupId, members, onClose }: Props) {
 
     setLoading(true);
     try {
-      await addDoc(collection(db, 'groups', groupId, 'expenses'), {
+      const data = {
         description: trimmedDesc,
         amount: parsedAmount,
         paidByMemberId: paidBy,
-        date: serverTimestamp(),
         category: category || null,
         splitAmong,
-      });
+      };
+      if (isEdit) {
+        await updateDoc(doc(db, 'groups', groupId, 'expenses', expense.id), data);
+      } else {
+        await addDoc(collection(db, 'groups', groupId, 'expenses'), {
+          ...data,
+          date: serverTimestamp(),
+        });
+      }
       onClose();
     } catch {
       setError('Could not save expense. Try again.');
@@ -60,7 +71,7 @@ export default function AddExpenseModal({ groupId, members, onClose }: Props) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
       <div className="bg-surface2 border border-border rounded-2xl p-5 w-full max-w-sm max-h-[90vh] overflow-y-auto">
-        <h3 className="text-text font-bold text-base mb-4">Add expense</h3>
+        <h3 className="text-text font-bold text-base mb-4">{isEdit ? 'Edit expense' : 'Add expense'}</h3>
 
         <label className="label">Description</label>
         <input
@@ -128,7 +139,7 @@ export default function AddExpenseModal({ groupId, members, onClose }: Props) {
         <div className="flex gap-3 mt-2">
           <button className="btn-secondary flex-1" onClick={onClose}>Cancel</button>
           <button className="btn-primary flex-1" onClick={save} disabled={loading}>
-            {loading ? 'Saving...' : 'Add'}
+            {loading ? 'Saving...' : isEdit ? 'Save' : 'Add'}
           </button>
         </div>
       </div>
