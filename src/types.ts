@@ -19,6 +19,7 @@ export interface Expense {
   date: Date;
   category?: string;
   splitAmong: string[];
+  splits?: Record<string, number>; // custom split: memberId → amount
 }
 
 export interface Payment {
@@ -41,4 +42,10 @@ export interface Settlement {
   to: string;
   toName: string;
   amount: number;
+}
+
+export interface RecentGroup {
+  id: string;
+  name: string;
+  visitedAt: string;
 }

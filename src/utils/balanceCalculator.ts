@@ -9,10 +9,17 @@ export function calculateBalances(
   members.forEach(m => { net[m.id] = 0; });
 
   for (const expense of expenses) {
-    const share = expense.amount / expense.splitAmong.length;
     net[expense.paidByMemberId] = (net[expense.paidByMemberId] ?? 0) + expense.amount;
-    for (const memberId of expense.splitAmong) {
-      net[memberId] = (net[memberId] ?? 0) - share;
+
+    if (expense.splits && Object.keys(expense.splits).length > 0) {
+      for (const [memberId, amount] of Object.entries(expense.splits)) {
+        net[memberId] = (net[memberId] ?? 0) - amount;
+      }
+    } else {
+      const share = expense.amount / expense.splitAmong.length;
+      for (const memberId of expense.splitAmong) {
+        net[memberId] = (net[memberId] ?? 0) - share;
+      }
     }
   }
 

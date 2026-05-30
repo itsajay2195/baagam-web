@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { logActivity } from '../utils/activityLogger';
 import type { Member } from '../types';
 
 interface Props {
   groupId: string;
   existingMembers: Member[];
-  onClose: () => void;
+  onClose: (added?: boolean) => void;
 }
 
 export default function AddMemberModal({ groupId, existingMembers, onClose }: Props) {
@@ -32,7 +33,8 @@ export default function AddMemberModal({ groupId, existingMembers, onClose }: Pr
         name: trimmed,
         createdAt: serverTimestamp(),
       });
-      onClose();
+      await logActivity(groupId, 'member_added', `${trimmed} was added to the group`);
+      onClose(true);
     } catch {
       setError('Could not add member. Try again.');
       setLoading(false);
@@ -57,7 +59,7 @@ export default function AddMemberModal({ groupId, existingMembers, onClose }: Pr
         {error && <p className="text-danger text-sm mb-3">{error}</p>}
 
         <div className="flex gap-3">
-          <button className="btn-secondary flex-1" onClick={onClose}>Cancel</button>
+          <button className="btn-secondary flex-1" onClick={() => onClose()}>Cancel</button>
           <button className="btn-primary flex-1" onClick={add} disabled={loading || !name.trim()}>
             {loading ? 'Adding...' : 'Add'}
           </button>

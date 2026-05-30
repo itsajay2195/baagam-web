@@ -4,14 +4,24 @@ import {
   doc,
   collection,
   onSnapshot,
+  deleteDoc,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import type { Group, Member, Expense, Payment } from '../types';
+import type { Group, Member, Expense, Payment, RecentGroup } from '../types';
+import type { ActivityType } from '../utils/activityLogger';
+
+interface Activity {
+  id: string;
+  type: ActivityType;
+  text: string;
+  createdAt: Date;
+}
 import { calculateBalances, simplifyDebts } from '../utils/balanceCalculator';
 import AddMemberModal from '../components/AddMemberModal';
 import AddExpenseModal from '../components/AddExpenseModal';
 import SettleUpModal from '../components/SettleUpModal';
+import IdentityModal from '../components/IdentityModal';
 
 type Tab = 'expenses' | 'balances' | 'members';
 
@@ -21,15 +31,37 @@ function toDate(val: Timestamp | Date | null | undefined): Date {
   return val;
 }
 
+function saveRecentGroup(id: string, name: string) {
+  try {
+    const stored: RecentGroup[] = JSON.parse(localStorage.getItem('baagam_recent_groups') ?? '[]');
+    const filtered = stored.filter(g => g.id !== id);
+    const updated = [{ id, name, visitedAt: new Date().toISOString() }, ...filtered].slice(0, 10);
+    localStorage.setItem('baagam_recent_groups', JSON.stringify(updated));
+  } catch {}
+}
+
+function getIdentityId(groupId: string): string | null {
+  return localStorage.getItem(`identity_${groupId}`);
+}
+
+function saveIdentityId(groupId: string, memberId: string) {
+  localStorage.setItem(`identity_${groupId}`, memberId);
+}
+
 export default function GroupPage() {
   const { groupId } = useParams<{ groupId: string }>();
   const [group, setGroup] = useState<Group | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [tab, setTab] = useState<Tab>('expenses');
   const [notFound, setNotFound] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [identityMemberId, setIdentityMemberId] = useState<string | null>(
+    groupId ? getIdentityId(groupId) : null,
+  );
+  const [showIdentityModal, setShowIdentityModal] = useState(false);
 
   const [showAddMember, setShowAddMember] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
@@ -38,24 +70,30 @@ export default function GroupPage() {
 
   useEffect(() => {
     if (!groupId) return;
-
     const unsubs: (() => void)[] = [];
 
     unsubs.push(
       onSnapshot(doc(db, 'groups', groupId), snap => {
         if (!snap.exists()) { setNotFound(true); return; }
         const d = snap.data();
-        setGroup({ id: snap.id, name: d.name, code: d.code, createdAt: toDate(d.createdAt) });
+        const g: Group = { id: snap.id, name: d.name, code: d.code, createdAt: toDate(d.createdAt) };
+        setGroup(g);
+        saveRecentGroup(snap.id, d.name);
       }),
     );
 
     unsubs.push(
       onSnapshot(collection(db, 'groups', groupId, 'members'), snap => {
-        setMembers(snap.docs.map(d => ({
+        const loaded = snap.docs.map(d => ({
           id: d.id,
           name: d.data().name,
           createdAt: toDate(d.data().createdAt),
-        })));
+        }));
+        setMembers(loaded);
+        // Show identity modal if identity not set and members exist
+        if (loaded.length > 0 && !getIdentityId(groupId)) {
+          setShowIdentityModal(true);
+        }
       }),
     );
 
@@ -69,6 +107,7 @@ export default function GroupPage() {
           date: toDate(d.data().date),
           category: d.data().category ?? undefined,
           splitAmong: d.data().splitAmong ?? [],
+          splits: d.data().splits ?? undefined,
         })));
       }),
     );
@@ -85,8 +124,41 @@ export default function GroupPage() {
       }),
     );
 
+    unsubs.push(
+      onSnapshot(collection(db, 'groups', groupId, 'activities'), snap => {
+        setActivities(
+          snap.docs
+            .map(d => ({
+              id: d.id,
+              type: d.data().type as ActivityType,
+              text: d.data().text,
+              createdAt: toDate(d.data().createdAt),
+            }))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .slice(0, 20),
+        );
+      }),
+    );
+
     return () => unsubs.forEach(u => u());
   }, [groupId]);
+
+  const handleIdentitySelect = (member: Member) => {
+    if (!groupId) return;
+    saveIdentityId(groupId, member.id);
+    setIdentityMemberId(member.id);
+    setShowIdentityModal(false);
+  };
+
+  const deleteExpense = async (expenseId: string) => {
+    if (!groupId || !window.confirm('Delete this expense?')) return;
+    await deleteDoc(doc(db, 'groups', groupId, 'expenses', expenseId));
+  };
+
+  const deletePayment = async (paymentId: string) => {
+    if (!groupId || !window.confirm('Delete this payment?')) return;
+    await deleteDoc(doc(db, 'groups', groupId, 'payments', paymentId));
+  };
 
   const copyLink = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -116,6 +188,16 @@ export default function GroupPage() {
   const memberMap = Object.fromEntries(members.map(m => [m.id, m.name]));
 
   const sortedExpenses = [...expenses].sort((a, b) => b.date.getTime() - a.date.getTime());
+  const sortedPayments = [...payments].sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  const activityIcons: Record<ActivityType, string> = {
+    expense_added: '🧾',
+    expense_edited: '✏️',
+    member_added: '👤',
+    payment_added: '💸',
+  };
+
+  const myName = identityMemberId ? memberMap[identityMemberId] : null;
 
   return (
     <div className="min-h-screen flex flex-col max-w-lg mx-auto px-4 pb-8">
@@ -128,14 +210,25 @@ export default function GroupPage() {
             <p className="text-text3 text-sm mt-0.5">
               {members.length} {members.length === 1 ? 'member' : 'members'} · {expenses.length}{' '}
               {expenses.length === 1 ? 'expense' : 'expenses'}
+              {myName && <> · <span className="text-accent">{myName}</span></>}
             </p>
           </div>
-          <button
-            onClick={copyLink}
-            className="flex items-center gap-1.5 bg-surface2 border border-border px-3 py-2 rounded-xl text-sm text-text2 hover:text-text transition-colors mt-1"
-          >
-            <span>{copied ? '✓ Copied' : '🔗 Share'}</span>
-          </button>
+          <div className="flex gap-2 mt-1">
+            {myName && (
+              <button
+                onClick={() => setShowIdentityModal(true)}
+                className="bg-surface2 border border-border px-3 py-2 rounded-xl text-xs text-text2 hover:text-text transition-colors"
+              >
+                Switch
+              </button>
+            )}
+            <button
+              onClick={copyLink}
+              className="flex items-center gap-1.5 bg-surface2 border border-border px-3 py-2 rounded-xl text-sm text-text2 hover:text-text transition-colors"
+            >
+              {copied ? '✓ Copied' : '🔗 Share'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -175,26 +268,26 @@ export default function GroupPage() {
           )}
 
           {members.length >= 2 && sortedExpenses.length === 0 && (
-            <div className="card text-text3 text-sm text-center py-6">
+            <div className="card text-text3 text-sm text-center py-6 mb-4">
               No expenses yet. Add the first one!
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 mb-6">
             {sortedExpenses.map(exp => {
-              const share = exp.splitAmong.length > 0
+              const isCustom = exp.splits && Object.keys(exp.splits).length > 0;
+              const share = !isCustom && exp.splitAmong.length > 0
                 ? (exp.amount / exp.splitAmong.length).toFixed(2)
-                : '0';
+                : null;
               return (
-                <div key={exp.id} className="card flex items-start justify-between gap-3">
+                <div key={exp.id} className="card flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-text font-semibold text-sm truncate">{exp.description}</p>
                     <p className="text-text3 text-xs mt-0.5">
                       Paid by{' '}
                       <span className="text-text2">{memberMap[exp.paidByMemberId] ?? '?'}</span>
-                      {exp.splitAmong.length > 0 && (
-                        <> · ₹{share} each</>
-                      )}
+                      {share && <> · ₹{share} each</>}
+                      {isCustom && <> · custom split</>}
                       {exp.category && (
                         <span className="ml-1.5 bg-surface px-1.5 py-0.5 rounded text-text3">{exp.category}</span>
                       )}
@@ -203,19 +296,49 @@ export default function GroupPage() {
                       {exp.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => setEditingExpense(exp)}
-                      className="text-text3 hover:text-text2 transition-colors text-xs px-2 py-1 rounded-lg border border-border bg-surface"
-                    >
-                      Edit
-                    </button>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
                     <span className="text-text font-bold text-base">₹{exp.amount.toFixed(2)}</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => setEditingExpense(exp)}
+                        className="text-text3 hover:text-text2 text-xs px-2 py-1 rounded-lg border border-border bg-surface transition-colors"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteExpense(exp.id)}
+                        className="text-danger hover:text-danger/80 text-xs px-2 py-1 rounded-lg border border-danger/30 bg-danger/5 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Activity feed */}
+          {activities.length > 0 && (
+            <>
+              <p className="label mb-3">Activity</p>
+              <div className="flex flex-col gap-1.5">
+                {activities.map(a => (
+                  <div key={a.id} className="flex items-start gap-2.5 py-2 border-b border-border/50 last:border-0">
+                    <span className="text-base mt-0.5">{activityIcons[a.type]}</span>
+                    <div>
+                      <p className="text-text text-sm">{a.text}</p>
+                      <p className="text-text3 text-xs mt-0.5">
+                        {a.createdAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                        {' · '}
+                        {a.createdAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -253,7 +376,7 @@ export default function GroupPage() {
           {settlements.length > 0 && (
             <>
               <label className="label">Suggested settlements</label>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 mb-5">
                 {settlements.map((s, i) => (
                   <div key={i} className="card flex items-center justify-between gap-2 text-sm">
                     <div>
@@ -269,9 +392,41 @@ export default function GroupPage() {
           )}
 
           {members.length > 0 && settlements.length === 0 && expenses.length > 0 && (
-            <div className="card text-accent text-sm text-center py-4 font-semibold">
+            <div className="card text-accent text-sm text-center py-4 font-semibold mb-5">
               All settled up! 🎉
             </div>
+          )}
+
+          {/* Recorded payments */}
+          {sortedPayments.length > 0 && (
+            <>
+              <label className="label">Recorded payments</label>
+              <div className="flex flex-col gap-2">
+                {sortedPayments.map(p => (
+                  <div key={p.id} className="card flex items-center justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-text text-sm">
+                        <span className="font-semibold">{memberMap[p.fromMemberId] ?? '?'}</span>
+                        <span className="text-text3"> → </span>
+                        <span className="font-semibold">{memberMap[p.toMemberId] ?? '?'}</span>
+                      </p>
+                      <p className="text-text3 text-xs mt-0.5">
+                        {p.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-accent font-bold text-sm">₹{p.amount.toFixed(2)}</span>
+                      <button
+                        onClick={() => deletePayment(p.id)}
+                        className="text-danger hover:text-danger/80 text-xs px-2 py-1 rounded-lg border border-danger/30 bg-danger/5 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -294,11 +449,21 @@ export default function GroupPage() {
 
           <div className="flex flex-col gap-2">
             {members.map(m => (
-              <div key={m.id} className="card flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold text-sm shrink-0">
+              <div
+                key={m.id}
+                className={`card flex items-center gap-3 ${m.id === identityMemberId ? 'border-accent/50' : ''}`}
+              >
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
+                  m.id === identityMemberId ? 'bg-accent text-black' : 'bg-accent/10 text-accent'
+                }`}>
                   {m.name[0]?.toUpperCase()}
                 </div>
-                <span className="text-text font-semibold text-sm">{m.name}</span>
+                <div className="flex-1">
+                  <span className="text-text font-semibold text-sm">{m.name}</span>
+                  {m.id === identityMemberId && (
+                    <span className="ml-2 text-accent text-xs font-semibold">You</span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -306,17 +471,28 @@ export default function GroupPage() {
       )}
 
       {/* Modals */}
+      {showIdentityModal && members.length > 0 && (
+        <IdentityModal
+          members={members}
+          onSelect={handleIdentitySelect}
+          onSkip={() => setShowIdentityModal(false)}
+        />
+      )}
       {showAddMember && groupId && (
         <AddMemberModal
           groupId={groupId}
           existingMembers={members}
-          onClose={() => setShowAddMember(false)}
+          onClose={(added) => {
+            setShowAddMember(false);
+            if (added && !identityMemberId) setShowIdentityModal(true);
+          }}
         />
       )}
       {showAddExpense && groupId && (
         <AddExpenseModal
           groupId={groupId}
           members={members}
+          defaultPaidBy={identityMemberId ?? undefined}
           onClose={() => setShowAddExpense(false)}
         />
       )}
@@ -325,6 +501,7 @@ export default function GroupPage() {
           groupId={groupId}
           members={members}
           expense={editingExpense}
+          defaultPaidBy={identityMemberId ?? undefined}
           onClose={() => setEditingExpense(null)}
         />
       )}
