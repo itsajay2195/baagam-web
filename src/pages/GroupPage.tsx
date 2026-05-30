@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import {
   doc,
   collection,
   onSnapshot,
   deleteDoc,
+  updateDoc,
+  getDocs,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -57,6 +59,7 @@ function saveIdentityId(groupId: string, memberId: string) {
 
 export default function GroupPage() {
   const { groupId } = useParams<{ groupId: string }>();
+  const navigate = useNavigate();
   const [group, setGroup] = useState<Group | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -74,6 +77,11 @@ export default function GroupPage() {
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showSettleUp, setShowSettleUp] = useState(false);
+
+  // Edit group name
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!groupId) return;
@@ -174,6 +182,108 @@ export default function GroupPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const startEditName = () => {
+    if (!group) return;
+    setNameInput(group.name);
+    setEditingName(true);
+    setTimeout(() => nameInputRef.current?.focus(), 50);
+  };
+
+  const saveGroupName = async () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed || !groupId || trimmed === group?.name) { setEditingName(false); return; }
+    await updateDoc(doc(db, 'groups', groupId), { name: trimmed });
+    setEditingName(false);
+  };
+
+  const deleteGroup = async () => {
+    if (!groupId) return;
+    const confirmed = window.confirm(`Delete "${group?.name}"? This will permanently remove all expenses, members, and data. This cannot be undone.`);
+    if (!confirmed) return;
+    const subcollections = ['members', 'expenses', 'payments', 'activities'];
+    for (const sub of subcollections) {
+      const snap = await getDocs(collection(db, 'groups', groupId, sub));
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    }
+    await deleteDoc(doc(db, 'groups', groupId));
+    try {
+      const stored = JSON.parse(localStorage.getItem('baagam_recent_groups') ?? '[]');
+      localStorage.setItem('baagam_recent_groups', JSON.stringify(stored.filter((g: { id: string }) => g.id !== groupId)));
+    } catch {}
+    navigate('/');
+  };
+
+  const exportSummary = () => {
+    if (!group) return;
+    const sortedExp = [...expenses].sort((a, b) => a.date.getTime() - b.date.getTime());
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>${group.name} — Baagam Summary</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 40px auto; color: #111; padding: 0 20px; }
+    h1 { font-size: 24px; margin-bottom: 4px; }
+    .meta { color: #666; font-size: 14px; margin-bottom: 32px; }
+    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; margin: 24px 0 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; border-bottom: 2px solid #eee; padding: 6px 8px; color: #666; font-size: 12px; }
+    td { padding: 8px; border-bottom: 1px solid #f0f0f0; }
+    .amount { text-align: right; font-weight: 600; }
+    .positive { color: #16a34a; }
+    .negative { color: #dc2626; }
+    .neutral { color: #666; }
+    .total { font-weight: 700; font-size: 18px; color: #111; }
+    .footer { margin-top: 40px; color: #999; font-size: 12px; text-align: center; }
+    @media print { body { margin: 20px; } }
+  </style>
+</head>
+<body>
+  <h1>${group.name}</h1>
+  <p class="meta">Generated ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} · ${members.length} members · ${expenses.length} expenses</p>
+
+  <h2>Summary</h2>
+  <p class="total">Total spent: ₹${expenses.reduce((s, e) => s + e.amount, 0).toFixed(2)}</p>
+
+  <h2>Balances</h2>
+  <table>
+    <tr><th>Member</th><th class="amount">Balance</th></tr>
+    ${balances.map(b => `<tr>
+      <td>${b.memberName}</td>
+      <td class="amount ${b.net > 0.005 ? 'positive' : b.net < -0.005 ? 'negative' : 'neutral'}">
+        ${b.net > 0.005 ? `+₹${b.net.toFixed(2)}` : b.net < -0.005 ? `-₹${(-b.net).toFixed(2)}` : 'Settled'}
+      </td>
+    </tr>`).join('')}
+  </table>
+
+  ${settlements.length > 0 ? `
+  <h2>Settlements</h2>
+  <table>
+    <tr><th>From</th><th>To</th><th class="amount">Amount</th></tr>
+    ${settlements.map(s => `<tr><td>${s.fromName}</td><td>${s.toName}</td><td class="amount">₹${s.amount.toFixed(2)}</td></tr>`).join('')}
+  </table>` : ''}
+
+  <h2>Expenses</h2>
+  <table>
+    <tr><th>Date</th><th>Description</th><th>Paid by</th><th class="amount">Amount</th></tr>
+    ${sortedExp.map(e => `<tr>
+      <td>${e.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
+      <td>${e.description}${e.category ? ` <span style="color:#999;font-size:11px">[${e.category}]</span>` : ''}</td>
+      <td>${memberMap[e.paidByMemberId] ?? '?'}</td>
+      <td class="amount">₹${e.amount.toFixed(2)}</td>
+    </tr>`).join('')}
+  </table>
+
+  <p class="footer">Exported from Baagam</p>
+</body>
+</html>`;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.print();
+  };
+
   if (notFound) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center">
@@ -255,30 +365,48 @@ export default function GroupPage() {
       {/* Header */}
       <div className="pt-10 pb-6">
         <Link to="/" className="text-text3 text-sm hover:text-text2 transition-colors">← All groups</Link>
-        <div className="flex items-start justify-between mt-3">
-          <div>
-            <h1 className="text-2xl font-bold text-text">{group.name}</h1>
+        <div className="flex items-start justify-between mt-3 gap-3">
+          <div className="flex-1 min-w-0">
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  ref={nameInputRef}
+                  className="input text-xl font-bold py-1 px-2"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveGroupName(); if (e.key === 'Escape') setEditingName(false); }}
+                />
+                <button onClick={saveGroupName} className="btn-primary py-1.5 px-3 text-sm shrink-0">Save</button>
+                <button onClick={() => setEditingName(false)} className="text-text3 text-sm hover:text-text2 shrink-0">✕</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-text truncate">{group.name}</h1>
+                <button onClick={startEditName} className="text-text3 hover:text-text2 transition-colors shrink-0" title="Rename">✏️</button>
+              </div>
+            )}
             <p className="text-text3 text-sm mt-0.5">
               {members.length} {members.length === 1 ? 'member' : 'members'} · {expenses.length}{' '}
               {expenses.length === 1 ? 'expense' : 'expenses'}
               {myName && <> · <span className="text-accent">{myName}</span></>}
             </p>
           </div>
-          <div className="flex gap-2 mt-1">
-            {myName && (
-              <button
-                onClick={() => setShowIdentityModal(true)}
-                className="bg-surface2 border border-border px-3 py-2 rounded-xl text-xs text-text2 hover:text-text transition-colors"
-              >
-                Switch
+          <div className="flex flex-col gap-1.5 shrink-0 mt-1">
+            <div className="flex gap-1.5">
+              {myName && (
+                <button onClick={() => setShowIdentityModal(true)} className="bg-surface2 border border-border px-2.5 py-1.5 rounded-xl text-xs text-text2 hover:text-text transition-colors">
+                  Switch
+                </button>
+              )}
+              <button onClick={copyLink} className="bg-surface2 border border-border px-2.5 py-1.5 rounded-xl text-xs text-text2 hover:text-text transition-colors">
+                {copied ? '✓ Copied' : '🔗 Share'}
+              </button>
+            </div>
+            {expenses.length > 0 && (
+              <button onClick={exportSummary} className="bg-surface2 border border-border px-2.5 py-1.5 rounded-xl text-xs text-text2 hover:text-text transition-colors text-center">
+                Export PDF
               </button>
             )}
-            <button
-              onClick={copyLink}
-              className="flex items-center gap-1.5 bg-surface2 border border-border px-3 py-2 rounded-xl text-sm text-text2 hover:text-text transition-colors"
-            >
-              {copied ? '✓ Copied' : '🔗 Share'}
-            </button>
           </div>
         </div>
       </div>
@@ -548,6 +676,13 @@ export default function GroupPage() {
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="mt-10 pt-6 border-t border-border">
+            <p className="text-text3 text-xs mb-3">Danger zone</p>
+            <button onClick={deleteGroup} className="btn-danger w-full text-sm">
+              Delete group
+            </button>
           </div>
         </div>
       )}
