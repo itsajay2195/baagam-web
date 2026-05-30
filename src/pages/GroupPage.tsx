@@ -17,13 +17,20 @@ interface Activity {
   text: string;
   createdAt: Date;
 }
+import { PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from 'recharts';
 import { calculateBalances, simplifyDebts } from '../utils/balanceCalculator';
 import AddMemberModal from '../components/AddMemberModal';
 import AddExpenseModal from '../components/AddExpenseModal';
 import SettleUpModal from '../components/SettleUpModal';
 import IdentityModal from '../components/IdentityModal';
 
-type Tab = 'expenses' | 'balances' | 'members';
+type Tab = 'expenses' | 'balances' | 'members' | 'stats';
+
+const CHART_COLORS = ['#00e5a0', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
+
+function shareOnWhatsApp(text: string) {
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+}
 
 function toDate(val: Timestamp | Date | null | undefined): Date {
   if (!val) return new Date();
@@ -190,6 +197,48 @@ export default function GroupPage() {
   const sortedExpenses = [...expenses].sort((a, b) => b.date.getTime() - a.date.getTime());
   const sortedPayments = [...payments].sort((a, b) => b.date.getTime() - a.date.getTime());
 
+  const totalSpend = expenses.reduce((s, e) => s + e.amount, 0);
+
+  // Category chart data
+  const categoryTotals: Record<string, number> = {};
+  for (const e of expenses) {
+    const cat = e.category || 'Other';
+    categoryTotals[cat] = (categoryTotals[cat] ?? 0) + e.amount;
+  }
+  const categoryData = Object.entries(categoryTotals)
+    .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
+    .sort((a, b) => b.value - a.value);
+
+  // Per-person spend data
+  const personSpend: Record<string, number> = {};
+  for (const e of expenses) {
+    personSpend[e.paidByMemberId] = (personSpend[e.paidByMemberId] ?? 0) + e.amount;
+  }
+  const personData = members
+    .map(m => ({ name: m.name, value: Math.round((personSpend[m.id] ?? 0) * 100) / 100 }))
+    .filter(d => d.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const buildWhatsAppSummary = () => {
+    const lines: string[] = [];
+    lines.push(`💰 *${group.name} — Expense Summary*`);
+    lines.push(`Total: ₹${totalSpend.toFixed(2)}\n`);
+    lines.push('*Balances:*');
+    for (const b of balances) {
+      if (b.net > 0.005) lines.push(`✅ ${b.memberName} gets back ₹${b.net.toFixed(2)}`);
+      else if (b.net < -0.005) lines.push(`🔴 ${b.memberName} owes ₹${(-b.net).toFixed(2)}`);
+      else lines.push(`✔️ ${b.memberName} is settled`);
+    }
+    if (settlements.length > 0) {
+      lines.push('\n*Settlements:*');
+      for (const s of settlements) {
+        lines.push(`👉 ${s.fromName} → ${s.toName}: ₹${s.amount.toFixed(2)}`);
+      }
+    }
+    lines.push(`\n_Shared from Baagam_`);
+    return lines.join('\n');
+  };
+
   const activityIcons: Record<ActivityType, string> = {
     expense_added: '🧾',
     expense_edited: '✏️',
@@ -234,11 +283,11 @@ export default function GroupPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-surface rounded-xl p-1 mb-5">
-        {(['expenses', 'balances', 'members'] as Tab[]).map(t => (
+        {(['expenses', 'balances', 'members', 'stats'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors capitalize ${
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors capitalize ${
               tab === t ? 'bg-surface2 text-text' : 'text-text3 hover:text-text2'
             }`}
           >
@@ -347,11 +396,21 @@ export default function GroupPage() {
         <div>
           <div className="flex justify-between items-center mb-3">
             <span className="label mb-0">Balances</span>
-            {settlements.length > 0 && (
-              <button className="btn-primary text-sm py-1.5 px-3" onClick={() => setShowSettleUp(true)}>
-                Settle up
-              </button>
-            )}
+            <div className="flex gap-2">
+              {expenses.length > 0 && (
+                <button
+                  onClick={() => shareOnWhatsApp(buildWhatsAppSummary())}
+                  className="bg-[#25D366]/10 border border-[#25D366]/30 text-[#25D366] text-sm font-semibold px-3 py-1.5 rounded-xl hover:bg-[#25D366]/20 transition-colors"
+                >
+                  WhatsApp
+                </button>
+              )}
+              {settlements.length > 0 && (
+                <button className="btn-primary text-sm py-1.5 px-3" onClick={() => setShowSettleUp(true)}>
+                  Settle up
+                </button>
+              )}
+            </div>
           </div>
 
           {members.length === 0 && (
@@ -467,6 +526,96 @@ export default function GroupPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Stats tab */}
+      {tab === 'stats' && (
+        <div>
+          {expenses.length === 0 ? (
+            <div className="card text-text3 text-sm text-center py-6">
+              Add some expenses to see stats.
+            </div>
+          ) : (
+            <>
+              {/* Total */}
+              <div className="card mb-4 text-center">
+                <p className="text-text3 text-xs font-semibold uppercase tracking-wide mb-1">Total spent</p>
+                <p className="text-accent text-3xl font-bold">₹{totalSpend.toFixed(2)}</p>
+                <p className="text-text3 text-xs mt-1">{expenses.length} expense{expenses.length !== 1 ? 's' : ''}</p>
+              </div>
+
+              {/* Category donut */}
+              {categoryData.length > 0 && (
+                <div className="card mb-4">
+                  <p className="text-text font-semibold text-sm mb-4">By category</p>
+                  <div className="flex items-center gap-4">
+                    <PieChart width={140} height={140}>
+                      <Pie
+                        data={categoryData}
+                        cx={65}
+                        cy={65}
+                        innerRadius={42}
+                        outerRadius={65}
+                        dataKey="value"
+                        strokeWidth={0}
+                      >
+                        {categoryData.map((_, i) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(v: unknown) => [`₹${Number(v).toFixed(2)}`, '']}
+                        contentStyle={{ background: '#1c1c22', border: '1px solid #2c2c36', borderRadius: 10, fontSize: 12 }}
+                        itemStyle={{ color: '#f2f2f5' }}
+                      />
+                    </PieChart>
+                    <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                      {categoryData.map((d, i) => (
+                        <div key={d.name} className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                          <span className="text-text2 text-xs truncate flex-1">{d.name}</span>
+                          <span className="text-text text-xs font-semibold shrink-0">₹{d.value.toFixed(0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Per-person bar chart */}
+              {personData.length > 0 && (
+                <div className="card">
+                  <p className="text-text font-semibold text-sm mb-4">Paid by person</p>
+                  <ResponsiveContainer width="100%" height={personData.length * 44 + 10}>
+                    <BarChart
+                      data={personData}
+                      layout="vertical"
+                      margin={{ top: 0, right: 8, left: 0, bottom: 0 }}
+                      barSize={18}
+                    >
+                      <XAxis type="number" hide />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        width={70}
+                        tick={{ fill: '#9494a8', fontSize: 12 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        formatter={(v: unknown) => [`₹${Number(v).toFixed(2)}`, 'Paid']}
+                        contentStyle={{ background: '#1c1c22', border: '1px solid #2c2c36', borderRadius: 10, fontSize: 12 }}
+                        itemStyle={{ color: '#f2f2f5' }}
+                        cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                      />
+                      <Bar dataKey="value" fill="#00e5a0" radius={[0, 6, 6, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
