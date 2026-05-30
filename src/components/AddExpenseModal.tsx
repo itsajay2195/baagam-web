@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { logActivity } from '../utils/activityLogger';
 import type { Member, Expense } from '../types';
 
 const CATEGORIES = ['Food', 'Travel', 'Stay', 'Shopping', 'Entertainment', 'Utilities', 'Other'];
@@ -87,13 +88,16 @@ export default function AddExpenseModal({ groupId, members, expense, defaultPaid
         splits: splits ?? null,
       };
 
+      const paidByName = members.find(m => m.id === paidBy)?.name ?? '?';
       if (isEdit) {
         await updateDoc(doc(db, 'groups', groupId, 'expenses', expense.id), data);
+        await logActivity(groupId, 'expense_edited', `${paidByName} edited "${trimmedDesc}" (₹${parsedAmount.toFixed(2)})`);
       } else {
         await addDoc(collection(db, 'groups', groupId, 'expenses'), {
           ...data,
           date: serverTimestamp(),
         });
+        await logActivity(groupId, 'expense_added', `${paidByName} paid ₹${parsedAmount.toFixed(2)} for "${trimmedDesc}"`);
       }
       onClose();
     } catch {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { logActivity } from '../utils/activityLogger';
 import type { Member, Settlement } from '../types';
 
 interface Props {
@@ -30,6 +31,9 @@ export default function SettleUpModal({ groupId, members, settlements, onClose }
         amount: parsedAmount,
         date: serverTimestamp(),
       });
+      const fromName = members.find(m => m.id === from)?.name ?? '?';
+      const toName = members.find(m => m.id === to)?.name ?? '?';
+      await logActivity(groupId, 'payment_added', `${fromName} paid ₹${parsedAmount.toFixed(2)} to ${toName}`);
       onClose();
     } catch {
       setError('Could not record payment. Try again.');

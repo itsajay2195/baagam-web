@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { logActivity } from '../utils/activityLogger';
 import type { Member } from '../types';
 
 interface Props {
@@ -32,6 +33,7 @@ export default function AddMemberModal({ groupId, existingMembers, onClose }: Pr
         name: trimmed,
         createdAt: serverTimestamp(),
       });
+      await logActivity(groupId, 'member_added', `${trimmed} was added to the group`);
       onClose(true);
     } catch {
       setError('Could not add member. Try again.');

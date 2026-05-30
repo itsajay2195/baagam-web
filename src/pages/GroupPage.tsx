@@ -9,6 +9,14 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { Group, Member, Expense, Payment, RecentGroup } from '../types';
+import type { ActivityType } from '../utils/activityLogger';
+
+interface Activity {
+  id: string;
+  type: ActivityType;
+  text: string;
+  createdAt: Date;
+}
 import { calculateBalances, simplifyDebts } from '../utils/balanceCalculator';
 import AddMemberModal from '../components/AddMemberModal';
 import AddExpenseModal from '../components/AddExpenseModal';
@@ -46,6 +54,7 @@ export default function GroupPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [tab, setTab] = useState<Tab>('expenses');
   const [notFound, setNotFound] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -115,6 +124,22 @@ export default function GroupPage() {
       }),
     );
 
+    unsubs.push(
+      onSnapshot(collection(db, 'groups', groupId, 'activities'), snap => {
+        setActivities(
+          snap.docs
+            .map(d => ({
+              id: d.id,
+              type: d.data().type as ActivityType,
+              text: d.data().text,
+              createdAt: toDate(d.data().createdAt),
+            }))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .slice(0, 20),
+        );
+      }),
+    );
+
     return () => unsubs.forEach(u => u());
   }, [groupId]);
 
@@ -165,17 +190,12 @@ export default function GroupPage() {
   const sortedExpenses = [...expenses].sort((a, b) => b.date.getTime() - a.date.getTime());
   const sortedPayments = [...payments].sort((a, b) => b.date.getTime() - a.date.getTime());
 
-  // Activity feed: merge expenses + payments sorted by date
-  type ActivityItem =
-    | { kind: 'expense'; data: Expense }
-    | { kind: 'payment'; data: Payment };
-
-  const activityFeed: ActivityItem[] = [
-    ...expenses.map(e => ({ kind: 'expense' as const, data: e, date: e.date })),
-    ...payments.map(p => ({ kind: 'payment' as const, data: p, date: p.date })),
-  ]
-    .sort((a, b) => b.date.getTime() - a.date.getTime())
-    .slice(0, 15);
+  const activityIcons: Record<ActivityType, string> = {
+    expense_added: '🧾',
+    expense_edited: '✏️',
+    member_added: '👤',
+    payment_added: '💸',
+  };
 
   const myName = identityMemberId ? memberMap[identityMemberId] : null;
 
@@ -299,51 +319,23 @@ export default function GroupPage() {
           </div>
 
           {/* Activity feed */}
-          {activityFeed.length > 0 && (
+          {activities.length > 0 && (
             <>
               <p className="label mb-3">Activity</p>
               <div className="flex flex-col gap-1.5">
-                {activityFeed.map((item, i) => {
-                  if (item.kind === 'expense') {
-                    const e = item.data;
-                    return (
-                      <div key={`e-${e.id}-${i}`} className="flex items-start gap-2.5 py-2 border-b border-border/50 last:border-0">
-                        <span className="text-base mt-0.5">🧾</span>
-                        <div>
-                          <p className="text-text text-sm">
-                            <span className="font-semibold">{memberMap[e.paidByMemberId] ?? '?'}</span>
-                            {' paid '}
-                            <span className="text-accent font-semibold">₹{e.amount.toFixed(2)}</span>
-                            {' for '}
-                            <span className="font-semibold">{e.description}</span>
-                          </p>
-                          <p className="text-text3 text-xs mt-0.5">
-                            {e.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  } else {
-                    const p = item.data;
-                    return (
-                      <div key={`p-${p.id}-${i}`} className="flex items-start gap-2.5 py-2 border-b border-border/50 last:border-0">
-                        <span className="text-base mt-0.5">💸</span>
-                        <div>
-                          <p className="text-text text-sm">
-                            <span className="font-semibold">{memberMap[p.fromMemberId] ?? '?'}</span>
-                            {' settled '}
-                            <span className="text-accent font-semibold">₹{p.amount.toFixed(2)}</span>
-                            {' to '}
-                            <span className="font-semibold">{memberMap[p.toMemberId] ?? '?'}</span>
-                          </p>
-                          <p className="text-text3 text-xs mt-0.5">
-                            {p.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  }
-                })}
+                {activities.map(a => (
+                  <div key={a.id} className="flex items-start gap-2.5 py-2 border-b border-border/50 last:border-0">
+                    <span className="text-base mt-0.5">{activityIcons[a.type]}</span>
+                    <div>
+                      <p className="text-text text-sm">{a.text}</p>
+                      <p className="text-text3 text-xs mt-0.5">
+                        {a.createdAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                        {' · '}
+                        {a.createdAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </>
           )}
