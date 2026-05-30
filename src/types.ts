@@ -8,6 +8,7 @@ export interface Group {
 export interface Member {
   id: string;
   name: string;
+  upiId?: string;
   createdAt: Date;
 }
 

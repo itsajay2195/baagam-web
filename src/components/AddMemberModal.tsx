@@ -12,6 +12,7 @@ interface Props {
 
 export default function AddMemberModal({ groupId, existingMembers, onClose }: Props) {
   const [name, setName] = useState('');
+  const [upiId, setUpiId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -31,6 +32,7 @@ export default function AddMemberModal({ groupId, existingMembers, onClose }: Pr
     try {
       await addDoc(collection(db, 'groups', groupId, 'members'), {
         name: trimmed,
+        upiId: upiId.trim() || null,
         createdAt: serverTimestamp(),
       });
       await logActivity(groupId, 'member_added', `${trimmed} was added to the group`);
@@ -48,12 +50,22 @@ export default function AddMemberModal({ groupId, existingMembers, onClose }: Pr
 
         <label className="label">Name</label>
         <input
-          className="input mb-4"
+          className="input mb-3"
           placeholder="e.g. Ajay"
           value={name}
           onChange={e => { setName(e.target.value); setError(''); }}
           onKeyDown={e => e.key === 'Enter' && add()}
           autoFocus
+        />
+
+        <label className="label">UPI ID <span className="text-text3 normal-case font-normal">(optional — for pay links)</span></label>
+        <input
+          className="input mb-4"
+          placeholder="e.g. ajay@okaxis"
+          value={upiId}
+          onChange={e => setUpiId(e.target.value)}
+          autoCapitalize="none"
+          inputMode="email"
         />
 
         {error && <p className="text-danger text-sm mb-3">{error}</p>}

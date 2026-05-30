@@ -94,6 +94,7 @@ export default function GroupPage() {
         const loaded = snap.docs.map(d => ({
           id: d.id,
           name: d.data().name,
+          upiId: d.data().upiId ?? undefined,
           createdAt: toDate(d.data().createdAt),
         }));
         setMembers(loaded);
@@ -193,6 +194,7 @@ export default function GroupPage() {
   const balances = calculateBalances(members, expenses, payments);
   const settlements = simplifyDebts(balances);
   const memberMap = Object.fromEntries(members.map(m => [m.id, m.name]));
+  const memberUpiMap = Object.fromEntries(members.filter(m => m.upiId).map(m => [m.id, m.upiId!]));
 
   const sortedExpenses = [...expenses].sort((a, b) => b.date.getTime() - a.date.getTime());
   const sortedPayments = [...payments].sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -436,16 +438,32 @@ export default function GroupPage() {
             <>
               <label className="label">Suggested settlements</label>
               <div className="flex flex-col gap-2 mb-5">
-                {settlements.map((s, i) => (
-                  <div key={i} className="card flex items-center justify-between gap-2 text-sm">
-                    <div>
-                      <span className="font-semibold text-text">{s.fromName}</span>
-                      <span className="text-text3"> → </span>
-                      <span className="font-semibold text-text">{s.toName}</span>
+                {settlements.map((s, i) => {
+                  const upiId = memberUpiMap[s.to];
+                  const upiLink = upiId
+                    ? `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(s.toName)}&am=${s.amount.toFixed(2)}&cu=INR&tn=${encodeURIComponent('Baagam settlement')}`
+                    : null;
+                  return (
+                    <div key={i} className="card flex items-center justify-between gap-2 text-sm">
+                      <div>
+                        <span className="font-semibold text-text">{s.fromName}</span>
+                        <span className="text-text3"> → </span>
+                        <span className="font-semibold text-text">{s.toName}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-accent font-bold">₹{s.amount.toFixed(2)}</span>
+                        {upiLink && (
+                          <a
+                            href={upiLink}
+                            className="bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-semibold px-2.5 py-1.5 rounded-lg hover:bg-blue-500/20 transition-colors"
+                          >
+                            Pay UPI
+                          </a>
+                        )}
+                      </div>
                     </div>
-                    <span className="text-accent font-bold shrink-0">₹{s.amount.toFixed(2)}</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}
@@ -518,9 +536,14 @@ export default function GroupPage() {
                   {m.name[0]?.toUpperCase()}
                 </div>
                 <div className="flex-1">
-                  <span className="text-text font-semibold text-sm">{m.name}</span>
-                  {m.id === identityMemberId && (
-                    <span className="ml-2 text-accent text-xs font-semibold">You</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-text font-semibold text-sm">{m.name}</span>
+                    {m.id === identityMemberId && (
+                      <span className="text-accent text-xs font-semibold">You</span>
+                    )}
+                  </div>
+                  {m.upiId && (
+                    <p className="text-text3 text-xs mt-0.5">{m.upiId}</p>
                   )}
                 </div>
               </div>
