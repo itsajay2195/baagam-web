@@ -24,8 +24,8 @@ export function calculateBalances(
   }
 
   for (const payment of payments) {
-    net[payment.fromMemberId] = (net[payment.fromMemberId] ?? 0) - payment.amount;
-    net[payment.toMemberId] = (net[payment.toMemberId] ?? 0) + payment.amount;
+    net[payment.fromMemberId] = (net[payment.fromMemberId] ?? 0) + payment.amount;
+    net[payment.toMemberId] = (net[payment.toMemberId] ?? 0) - payment.amount;
   }
 
   return members.map(m => ({
