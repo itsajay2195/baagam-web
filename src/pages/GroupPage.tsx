@@ -7,9 +7,11 @@ import {
   deleteDoc,
   updateDoc,
   getDocs,
+  setDoc,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 import type { Group, Member, Expense, Payment, RecentGroup } from '../types';
 import type { ActivityType } from '../utils/activityLogger';
 
@@ -60,6 +62,7 @@ function saveIdentityId(groupId: string, memberId: string) {
 export default function GroupPage() {
   const { groupId } = useParams<{ groupId: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [group, setGroup] = useState<Group | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -94,6 +97,13 @@ export default function GroupPage() {
         const g: Group = { id: snap.id, name: d.name, code: d.code, createdAt: toDate(d.createdAt) };
         setGroup(g);
         saveRecentGroup(snap.id, d.name);
+        // Sync to Firestore for cross-device access when signed in
+        if (user) {
+          setDoc(doc(db, 'users', user.uid, 'groups', snap.id), {
+            name: d.name,
+            visitedAt: new Date().toISOString(),
+          }).catch(() => {});
+        }
       }),
     );
 
